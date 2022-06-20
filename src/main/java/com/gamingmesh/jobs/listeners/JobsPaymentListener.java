@@ -1381,22 +1381,12 @@ public final class JobsPaymentListener implements Listener {
 	if (notNpc && jDamager.getName().equalsIgnoreCase(((Player) lVictim).getName()))
 	    return;
 
-	if (Jobs.getGCManager().payForStackedEntities) {
-	    if (JobsHook.WildStacker.isEnabled()) {
-		for (int i = 0; i < HookManager.getWildStackerHandler().getEntityAmount(lVictim) - 1; i++) {
-		    Jobs.action(jDamager, new EntityActionInfo(lVictim, ActionType.KILL), e.getDamager(), lVictim);
-		}
-	    } else if (JobsHook.StackMob.isEnabled() && HookManager.getStackMobHandler().isStacked(lVictim)) {
-		for (uk.antiperson.stackmob.entity.StackEntity stacked : HookManager.getStackMobHandler().getStackEntities()) {
-		    if (stacked.getEntity().getType() == lVictim.getType()) {
-			Jobs.action(jDamager, new EntityActionInfo(stacked.getEntity(), ActionType.KILL), e.getDamager(), stacked.getEntity());
-		    }
-		}
-	    }
+	if (Jobs.getGCManager().payForStackedEntities && JobsHook.WildStacker.isEnabled()) {
+		final int nombre = HookManager.getWildStackerHandler().getEntityAmount(lVictim);
+		Jobs.action(jDamager, new EntityActionInfo(lVictim, ActionType.KILL), e.getDamager(), lVictim, nombre);
 	}
-
 	Jobs.action(jDamager, new EntityActionInfo(lVictim, ActionType.KILL), e.getDamager(), lVictim);
-
+	
 	// Payment for killing player with particular job, except NPC's
 	if (notNpc) {
 	    JobsPlayer jPlayer = Jobs.getPlayerManager().getJobsPlayer((Player) lVictim);
