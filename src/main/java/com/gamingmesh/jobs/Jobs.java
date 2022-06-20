@@ -946,6 +946,19 @@ public final class Jobs extends JavaPlugin {
 	action(jPlayer, info, block, null, null);
     }
 
+	/**
+     * Perform an action for the given {@link JobsPlayer} with the given action info and block.
+     * 
+     * @param jPlayer {@link JobsPlayer}
+     * @param info {@link ActionInfo}
+     * @param block {@link Block}
+	 * @param nombre 
+     * @see #action(JobsPlayer, ActionInfo, Block, Entity, LivingEntity)
+     */
+	public static void action(JobsPlayer jPlayer, ActionInfo info, Block block, int nombre) {
+		action(jPlayer, info, block, (Entity)null, (LivingEntity)null, nombre);
+	}
+
     /**
      * Perform an action for the given {@link JobsPlayer} with the given action info and entity.
      * 
@@ -971,6 +984,20 @@ public final class Jobs extends JavaPlugin {
     public static void action(JobsPlayer jPlayer, ActionInfo info, Entity ent, LivingEntity victim) {
 	action(jPlayer, info, null, ent, victim);
     }
+	/**
+     * Perform an action for the given {@link JobsPlayer} with the given action info,
+     * entity and living entity.
+     * 
+     * @param jPlayer {@link JobsPlayer}
+     * @param info {@link ActionInfo}
+     * @param ent {@link Entity}
+     * @param victim {@link LivingEntity}
+	 * @param nombre 
+     * @see #action(JobsPlayer, ActionInfo, Block, Entity, LivingEntity)
+     */
+	public static void action(JobsPlayer jPlayer, ActionInfo info, Entity ent, LivingEntity victim, int nombre) {
+		action(jPlayer, info, (Block)null, ent, victim, nombre);
+	}
 
     /**
      * Perform an action for the given {@link JobsPlayer} with the parameters.
@@ -1297,6 +1324,312 @@ public final class Jobs extends JavaPlugin {
 	    expiredJobs.forEach(j -> getPlayerManager().leaveJob(jPlayer, j));
 	}
     }
+	public static void action(JobsPlayer jPlayer, ActionInfo info, Block block, Entity ent, LivingEntity victim, int nombre) {
+		if (jPlayer == null)
+			return;
+	
+		List<JobProgression> progression = jPlayer.getJobProgression();
+		int numjobs = progression.size();
+	
+		if (!isBpOk(jPlayer, info, block, true))
+			return;
+	
+		// no job
+		if (numjobs == 0) {
+			if (noneJob == null || noneJob.isWorldBlackListed(block) || noneJob.isWorldBlackListed(block, ent) || noneJob.isWorldBlackListed(victim))
+			return;
+	
+			JobInfo jobinfo = noneJob.getJobInfo(info, 1);
+	
+			checkDailyQuests(jPlayer, noneJob, info);
+	
+			if (jobinfo == null)
+			return;
+	
+			double income = jobinfo.getIncome(1, numjobs, jPlayer.maxJobsEquation);
+			double pointAmount = jobinfo.getPoints(1, numjobs, jPlayer.maxJobsEquation);
+	
+			if (income == 0D && pointAmount == 0D)
+			return;
+	
+			Boost boost = getPlayerManager().getFinalBonus(jPlayer, noneJob);
+	
+			JobsPrePaymentEvent jobsPrePaymentEvent = new JobsPrePaymentEvent(jPlayer.getPlayer(), noneJob, income,
+			pointAmount, block, ent, victim, info);
+			Bukkit.getServer().getPluginManager().callEvent(jobsPrePaymentEvent);
+			// If event is canceled, don't do anything
+			if (jobsPrePaymentEvent.isCancelled()) {
+			income = 0D;
+			pointAmount = 0D;
+			} else {
+			income = jobsPrePaymentEvent.getAmount() * nombre;
+			pointAmount = jobsPrePaymentEvent.getPoints() * nombre;
+			}
+	
+			// Calculate income
+			if (income != 0D) {
+			income = boost.getFinalAmount(CurrencyType.MONEY, income);
+	
+			if (gConfigManager.useMinimumOveralPayment && income > 0) {
+				double maxLimit = income * gConfigManager.MinimumOveralPaymentLimit;
+	
+				if (income < maxLimit)
+				income = maxLimit;
+			}
+			}
+	
+			// Calculate points
+			if (pointAmount != 0D) {
+			pointAmount = boost.getFinalAmount(CurrencyType.POINTS, pointAmount);
+	
+			if (gConfigManager.useMinimumOveralPoints && pointAmount > 0) {
+				double maxLimit = pointAmount * gConfigManager.MinimumOveralPointsLimit;
+	
+				if (pointAmount < maxLimit)
+				pointAmount = maxLimit;
+			}
+			}
+	
+			if (!jPlayer.isUnderLimit(CurrencyType.MONEY, income)) {
+			if (gConfigManager.useMaxPaymentCurve) {
+				double percentOver = jPlayer.percentOverLimit(CurrencyType.MONEY);
+				double percentLoss = 100 / ((1 / gConfigManager.maxPaymentCurveFactor * percentOver * percentOver) + 1);
+	
+				income = income - (income * percentLoss / 100);
+			} else
+				income = 0D;
+			if (gConfigManager.getLimit(CurrencyType.MONEY).getStopWith().contains(CurrencyType.POINTS))
+				pointAmount = 0D;
+			}
+	
+			if (!jPlayer.isUnderLimit(CurrencyType.POINTS, pointAmount)) {
+			pointAmount = 0D;
+			if (gConfigManager.getLimit(CurrencyType.POINTS).getStopWith().contains(CurrencyType.MONEY))
+				income = 0D;
+			}
+	
+			if (income == 0D && pointAmount == 0D)
+			return;
+	
+			if (info.getType() == ActionType.BREAK && block != null)
+			getBpManager().remove(block);
+	
+			if (pointAmount != 0D)
+			jPlayer.setSaved(false);
+	
+			Map<CurrencyType, Double> payments = new HashMap<>();
+			if (income != 0D)
+			payments.put(CurrencyType.MONEY, income);
+			if (pointAmount != 0D)
+			payments.put(CurrencyType.POINTS, pointAmount);
+	
+			economy.pay(jPlayer, payments);
+	
+			if (gConfigManager.LoggingUse) {
+			Map<CurrencyType, Double> amounts = new HashMap<>();
+			amounts.put(CurrencyType.MONEY, income);
+			getLoging().recordToLog(jPlayer, info, amounts);
+			}
+	
+		} else {
+			List<Job> expiredJobs = new ArrayList<>();
+			for (JobProgression prog : progression) {
+			if (prog.getJob().isWorldBlackListed(block) || prog.getJob().isWorldBlackListed(block, ent)
+				|| prog.getJob().isWorldBlackListed(victim))
+				continue;
+	
+			if (jPlayer.isLeftTimeEnded(prog.getJob())) {
+				expiredJobs.add(prog.getJob());
+			}
+	
+			JobInfo jobinfo = prog.getJob().getJobInfo(info, prog.getLevel());
+	
+			checkDailyQuests(jPlayer, prog.getJob(), info);
+	
+			if (jobinfo == null || (gConfigManager.disablePaymentIfMaxLevelReached && prog.getLevel() >= prog.getJob().getMaxLevel())) {
+				continue;
+			}
+	
+			double income = jobinfo.getIncome(prog.getLevel(), numjobs, jPlayer.maxJobsEquation);
+			double pointAmount = jobinfo.getPoints(prog.getLevel(), numjobs, jPlayer.maxJobsEquation);
+			double expAmount = jobinfo.getExperience(prog.getLevel(), numjobs, jPlayer.maxJobsEquation);
+	
+			if (income == 0D && pointAmount == 0D && expAmount == 0D)
+				continue;
+	
+			if (gConfigManager.addXpPlayer()) {
+				Player player = jPlayer.getPlayer();
+				if (player != null) {
+				/*
+				 * Minecraft experience is calculated in whole numbers only.
+				 * Calculate the fraction of an experience point and perform a dice roll.
+				 * That way jobs that give fractions of experience points will slowly give
+				 * experience in the aggregate
+				 */
+				int expInt = (int) expAmount;
+				double remainder = expAmount - expInt;
+				if (Math.abs(remainder) > Math.random()) {
+					if (expAmount < 0)
+					expInt--;
+					else
+					expInt++;
+				}
+	
+				if (expInt < 0 && getPlayerExperience(player) < -expInt) {
+					player.setLevel(0);
+					player.setTotalExperience(0);
+					player.setExp(0);
+				} else
+					player.giveExp(expInt);
+				}
+			}
+	
+			Boost boost = getPlayerManager().getFinalBonus(jPlayer, prog.getJob(), ent, victim);
+	
+			JobsPrePaymentEvent jobsPrePaymentEvent = new JobsPrePaymentEvent(jPlayer.getPlayer(), prog.getJob(), income,
+				pointAmount, block, ent, victim, info);
+	
+			Bukkit.getServer().getPluginManager().callEvent(jobsPrePaymentEvent);
+			// If event is canceled, don't do anything
+			if (jobsPrePaymentEvent.isCancelled()) {
+				income = 0D;
+				pointAmount = 0D;
+			} else {
+				income = jobsPrePaymentEvent.getAmount() * nombre;
+				pointAmount = jobsPrePaymentEvent.getPoints() * nombre;
+			}
+	
+			// Calculate income
+			if (income != 0D) {
+				income = boost.getFinalAmount(CurrencyType.MONEY, income);
+	
+				if (gConfigManager.useMinimumOveralPayment && income > 0) {
+				double maxLimit = income * gConfigManager.MinimumOveralPaymentLimit;
+	
+				if (income < maxLimit)
+					income = maxLimit;
+				}
+			}
+	
+			// Calculate points
+			if (pointAmount != 0D) {
+				pointAmount = boost.getFinalAmount(CurrencyType.POINTS, pointAmount);
+	
+				if (gConfigManager.useMinimumOveralPoints && pointAmount > 0) {
+				double maxLimit = pointAmount * gConfigManager.MinimumOveralPointsLimit;
+	
+				if (pointAmount < maxLimit)
+					pointAmount = maxLimit;
+				}
+			}
+	
+			// Calculate exp
+			if (expAmount != 0D) {
+				expAmount = boost.getFinalAmount(CurrencyType.EXP, expAmount);
+	
+				if (gConfigManager.useMinimumOveralExp && expAmount > 0) {
+				double maxLimit = expAmount * gConfigManager.minimumOveralExpLimit;
+	
+				if (expAmount < maxLimit)
+					expAmount = maxLimit;
+				}
+			}
+	
+			if (!jPlayer.isUnderLimit(CurrencyType.MONEY, income)) {
+				income = 0D;
+	
+				CurrencyLimit cLimit = gConfigManager.getLimit(CurrencyType.MONEY);
+	
+				if (cLimit.getStopWith().contains(CurrencyType.EXP))
+				expAmount = 0D;
+	
+				if (cLimit.getStopWith().contains(CurrencyType.POINTS))
+				pointAmount = 0D;
+			}
+	
+			if (!jPlayer.isUnderLimit(CurrencyType.EXP, expAmount)) {
+				expAmount = 0D;
+	
+				CurrencyLimit cLimit = gConfigManager.getLimit(CurrencyType.EXP);
+	
+				if (cLimit.getStopWith().contains(CurrencyType.MONEY))
+				income = 0D;
+	
+				if (cLimit.getStopWith().contains(CurrencyType.POINTS))
+				pointAmount = 0D;
+			}
+	
+			if (!jPlayer.isUnderLimit(CurrencyType.POINTS, pointAmount)) {
+				pointAmount = 0D;
+	
+				CurrencyLimit cLimit = gConfigManager.getLimit(CurrencyType.POINTS);
+	
+				if (cLimit.getStopWith().contains(CurrencyType.MONEY))
+				income = 0D;
+	
+				if (cLimit.getStopWith().contains(CurrencyType.EXP))
+				expAmount = 0D;
+			}
+	
+			if (income == 0D && pointAmount == 0D && expAmount == 0D)
+				continue;
+			
+			expAmount *= nombre;
+			// JobsPayment event
+			JobsExpGainEvent jobsExpGainEvent = new JobsExpGainEvent(jPlayer.getPlayer(), prog.getJob(), expAmount,
+				block, ent, victim, info);
+			Bukkit.getServer().getPluginManager().callEvent(jobsExpGainEvent);
+			// If event is canceled, don't do anything
+			expAmount = jobsExpGainEvent.isCancelled() ? 0D : jobsExpGainEvent.getExp();
+	
+			try {
+				if (expAmount != 0D && gConfigManager.BossBarEnabled)
+				if (gConfigManager.BossBarShowOnEachAction)
+					bbManager.ShowJobProgression(jPlayer, prog, expAmount);
+				else
+					jPlayer.getUpdateBossBarFor().add(prog.getJob().getName());
+			} catch (Throwable e) {
+				e.printStackTrace();
+				consoleMsg("&c[Jobs] Some issues with boss bar feature accured, try disabling it to avoid it.");
+			}
+	
+			Map<CurrencyType, Double> payments = new HashMap<>();
+			if (income != 0D)
+				payments.put(CurrencyType.MONEY, income);
+			if (pointAmount != 0D)
+				payments.put(CurrencyType.POINTS, pointAmount);
+			if (expAmount != 0D)
+				payments.put(CurrencyType.EXP, expAmount);
+	
+			FASTPAYMENT.put(jPlayer.getUniqueId(), new FastPayment(jPlayer, info, new BufferedPayment(jPlayer.getPlayer(), payments), prog
+				.getJob()));
+	
+			economy.pay(jPlayer, payments);
+			int oldLevel = prog.getLevel();
+	
+			if (gConfigManager.LoggingUse) {
+				Map<CurrencyType, Double> amounts = new HashMap<>();
+				amounts.put(CurrencyType.MONEY, income);
+				amounts.put(CurrencyType.EXP, expAmount);
+				amounts.put(CurrencyType.POINTS, pointAmount);
+				getLoging().recordToLog(jPlayer, info, amounts);
+			}
+	
+			if (prog.addExperience(expAmount))
+				getPlayerManager().performLevelUp(jPlayer, prog.getJob(), oldLevel);
+			}
+	
+			//need to update bp
+			if (block != null) {
+			BlockProtection bp = getBpManager().getBp(block.getLocation());
+			if (bp != null)
+				bp.setPaid(true);
+			}
+	
+			expiredJobs.forEach(j -> getPlayerManager().leaveJob(jPlayer, j));
+		}
+		}
+	
 
     private static boolean isBpOk(JobsPlayer player, ActionInfo info, Block block, boolean inform) {
 	if (block == null || !gConfigManager.useBlockProtection)
